@@ -24,7 +24,6 @@ let
         buildInputs = [ libGL libGLU localPython ];
       } ''
       makeWrapper ${localPython}/bin/local-python $out/bin/py \
-       --prefix LD_LIBRARY_PATH : /usr/lib/wsl/lib \
        --prefix LD_LIBRARY_PATH : ${lib.makeLibraryPath [pkgs.stdenv.cc.cc libGL libGLU pkgs.glib]}
     '';
 
@@ -38,6 +37,7 @@ let
   run = writeScriptBin "run"
     ''
       ${python}/bin/py main.py --base-directory ~/data/comfy-base --output-directory /mnt/l/comfy/ --disable-metadata
+
     '';
 in
 {

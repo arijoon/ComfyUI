@@ -1,0 +1,13 @@
+opencv-python
+gguf
+ultralytics
+gitpython
+evalidate
+lark
+diffusers
+webcolors
+dill
+scikit-image
+piexif
+toml
+segment_anything

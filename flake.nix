@@ -170,6 +170,23 @@
                 '';
             });
           }
+          // lib.optionalAttrs (prev ? onnxruntime-gpu) {
+            onnxruntime-gpu = prev.onnxruntime-gpu.overrideAttrs (old: {
+              autoPatchelfIgnoreMissingDeps = (old.autoPatchelfIgnoreMissingDeps or [ ]) ++ [
+                "libcublas.so.*"
+                "libcublasLt.so.*"
+                "libcudart.so.*"
+                "libcudnn.so.*"
+                "libcufft.so.*"
+                "libcurand.so.*"
+                "libnvinfer.so.*"
+                "libnvonnxparser.so.*"
+              ];
+              preFixup =
+                (old.preFixup or "")
+                + torchNvSearchPaths;
+            });
+          }
           // lib.optionalAttrs (prev ? pyopengl) {
             pyopengl = prev.pyopengl.overrideAttrs (old: {
               buildInputs = (old.buildInputs or [ ]) ++ [ pkgs.libGL ];
@@ -195,28 +212,82 @@
             });
           };
 
+        # Some sdist packages need setuptools/wheel but don't declare it
+        buildFixesOverlay = final: prev:
+          let
+            needsSetuptools = [ "antlr4-python3-runtime" "fvcore" "iopath" "sam2" ];
+            fix = name: lib.nameValuePair name (prev.${name}.overrideAttrs (old: {
+              nativeBuildInputs = (old.nativeBuildInputs or [ ]) ++ [ final.setuptools final.wheel ];
+            }));
+          in
+          builtins.listToAttrs (map fix (builtins.filter (n: prev ? ${n}) needsSetuptools));
+
+        # All opencv variants provide cv2 — alias them to avoid collisions
+        opencvOverlay = final: prev:
+          lib.optionalAttrs (prev ? opencv-python-headless) {
+            opencv-python-headless = final.opencv-python;
+          }
+          // lib.optionalAttrs (prev ? opencv-contrib-python) {
+            opencv-contrib-python = final.opencv-python;
+          };
+
         pythonSet = (pkgs.callPackage pyproject-nix.build.packages { inherit python; }).overrideScope (
           lib.composeManyExtensions [
             pyproject-build-systems.overlays.default
             overlay
             cudaOverlay
             comfyuiOverlay
+            buildFixesOverlay
+            opencvOverlay
           ]
         );
 
-        # Reads requirements.txt, patches pyproject.toml with our deps + CUDA index,
+        # Reads requirements.txt + requirements.local.txt + mod requirements,
+        # patches pyproject.toml with deps + CUDA index,
         # writes the result to pyproject.local.toml (upstream pyproject.toml stays untouched).
         syncScript = pkgs.writeText "sync-deps.py" ''
           import re
-
           import os
+          import glob
 
-          with open("requirements.txt") as f:
-              deps = [l.strip() for l in f if l.strip() and not l.startswith("#")]
+          def normalize(name):
+              return re.split(r'[><=~!\[;@]', name.strip())[0].strip().lower().replace('-', '_').replace(' ', "")
 
-          if os.path.exists("requirements.local.txt"):
-              with open("requirements.local.txt") as f:
-                  deps += [l.strip() for l in f if l.strip() and not l.startswith("#")]
+          def read_reqs(path):
+              lines = []
+              try:
+                  with open(path) as f:
+                      for l in f:
+                          l = l.strip()
+                          if l and not l.startswith('#') and not l.startswith('git+'):
+                              lines.append(l)
+              except FileNotFoundError:
+                  pass
+              return lines
+
+          skip_pkgs = {
+              'torch', 'torchvision', 'torchaudio', 'torchsde',
+              'onnxruntime',
+              'opencv_python', 'opencv_python_headless', 'opencv_contrib_python',
+          }
+
+          deps = read_reqs("requirements.txt")
+          deps += read_reqs("requirements.local.txt")
+
+          seen = set(normalize(d) for d in deps)
+
+          base_dir = os.path.join(os.path.dirname(os.path.abspath(".")), "comfyui-base")
+          mod_reqs = sorted(glob.glob(os.path.join(base_dir, "custom_nodes", "*", "requirements.txt")))
+          for req_file in mod_reqs:
+              mod_name = os.path.basename(os.path.dirname(req_file))
+              if mod_name.endswith('.disabled'):
+                  continue
+              for line in read_reqs(req_file):
+                  norm = normalize(line)
+                  if norm not in seen and norm not in skip_pkgs:
+                      seen.add(norm)
+                      deps.append(line)
+                      print(f"  + {line} (from {mod_name})")
 
           with open("pyproject.toml") as f:
               content = f.read()
@@ -265,7 +336,7 @@
           with open("pyproject.local.toml", "w") as f:
               f.write(content)
 
-          print("Wrote pyproject.local.toml from requirements.txt")
+          print("Wrote pyproject.local.toml")
         '';
 
         syncDeps = pkgs.writeShellScriptBin "sync-deps" ''
@@ -276,8 +347,79 @@
           cp pyproject.toml pyproject.toml.upstream
           trap 'mv pyproject.toml.upstream pyproject.toml' EXIT
           cp pyproject.local.toml pyproject.toml
-          UV_PYTHON=${python}/bin/python3 ${pkgs.uv}/bin/uv lock
+          # Use a temp cache dir to avoid stale .git files in ~/.cache/uv
+          UV_CACHE_DIR="$(mktemp -d)" UV_PYTHON=${python}/bin/python3 ${pkgs.uv}/bin/uv lock --prerelease=allow
           echo "Done. Re-enter 'nix develop' to pick up changes."
+        '';
+
+        auditScript = pkgs.writeText "audit-deps.py" ''
+          import json, re, sys, urllib.request
+
+          with open("uv.lock") as f:
+              content = f.read()
+
+          blocks = re.split(r"\n(?=\[\[package\]\])", content)
+          pkgs = {}
+          for b in blocks:
+              nm = re.search(r'^name = "(.+?)"', b, re.M)
+              ver = re.search(r'^version = "(.+?)"', b, re.M)
+              if nm and ver:
+                  pkgs[nm.group(1)] = ver.group(1)
+
+          print(f"Auditing {len(pkgs)} packages against OSV database...")
+
+          queries = [
+              {"package": {"name": n, "ecosystem": "PyPI"}, "version": v}
+              for n, v in pkgs.items()
+          ]
+          req = urllib.request.Request(
+              "https://api.osv.dev/v1/querybatch",
+              data=json.dumps({"queries": queries}).encode(),
+              headers={"Content-Type": "application/json"},
+              method="POST",
+          )
+          results = json.loads(urllib.request.urlopen(req, timeout=30).read())["results"]
+
+          names = list(pkgs.keys())
+          total = 0
+          for i, r in enumerate(results):
+              vulns = r.get("vulns", [])
+              if not vulns:
+                  continue
+              name, ver = names[i], pkgs[names[i]]
+              print(f"\n  {name}=={ver}")
+              for v in vulns:
+                  total += 1
+                  vid = v.get("id", "?")
+                  try:
+                      d = json.loads(urllib.request.urlopen(
+                          f"https://api.osv.dev/v1/vulns/{vid}", timeout=10
+                      ).read())
+                      summary = d.get("summary", d.get("details", "No summary")[:200])
+                      severity = [s.get("score", "?") for s in d.get("severity", [])]
+                      fixed = []
+                      for a in d.get("affected", []):
+                          for rng in a.get("ranges", []):
+                              for e in rng.get("events", []):
+                                  if "fixed" in e:
+                                      fixed.append(e["fixed"])
+                      print(f"    {vid}: {summary}")
+                      print(f"      Severity: {severity}")
+                      print(f"      Fixed in: {', '.join(fixed) if fixed else 'No fix yet'}")
+                  except Exception:
+                      print(f"    {vid}: (could not fetch details)")
+
+          if total == 0:
+              print("\nNo known vulnerabilities found.")
+          else:
+              print(f"\n{total} vulnerability(ies) found.")
+              sys.exit(1)
+        '';
+
+        auditDeps = pkgs.writeShellScriptBin "audit-deps" ''
+          set -euo pipefail
+          cd "$(git rev-parse --show-toplevel)"
+          ${python}/bin/python3 ${auditScript}
         '';
 
         run = pkgs.writeScriptBin "run" ''
@@ -295,6 +437,7 @@
               pkgs.uv
               pkgs.nixfmt-rfc-style
               syncDeps
+              auditDeps
               run
             ];
 
@@ -324,6 +467,7 @@
           };
 
         packages.sync-deps = syncDeps;
+        packages.audit-deps = auditDeps;
       }
     );
 }

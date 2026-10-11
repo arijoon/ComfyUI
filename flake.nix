@@ -163,11 +163,9 @@
               # libcudnn.so.9 dlopen's sub-libraries at runtime but they aren't DT_NEEDED,
               # so auto-patchelf won't add the self-dir. Append to auto-patchelf's array
               # in preFixup so it's included when auto-patchelf runs in postFixup.
-              preFixup =
-                (old.preFixup or "")
-                + ''
-                  appendRunpaths+=("$out/${python.sitePackages}/nvidia/cudnn/lib")
-                '';
+              preFixup = (old.preFixup or "") + ''
+                appendRunpaths+=("$out/${python.sitePackages}/nvidia/cudnn/lib")
+              '';
             });
           }
           // lib.optionalAttrs (prev ? onnxruntime-gpu) {
@@ -182,9 +180,7 @@
                 "libnvinfer.so.*"
                 "libnvonnxparser.so.*"
               ];
-              preFixup =
-                (old.preFixup or "")
-                + torchNvSearchPaths;
+              preFixup = (old.preFixup or "") + torchNvSearchPaths;
             });
           }
           // lib.optionalAttrs (prev ? pyopengl) {
@@ -213,17 +209,31 @@
           };
 
         # Some sdist packages need setuptools/wheel but don't declare it
-        buildFixesOverlay = final: prev:
+        buildFixesOverlay =
+          final: prev:
           let
-            needsSetuptools = [ "antlr4-python3-runtime" "fvcore" "iopath" "sam2" ];
-            fix = name: lib.nameValuePair name (prev.${name}.overrideAttrs (old: {
-              nativeBuildInputs = (old.nativeBuildInputs or [ ]) ++ [ final.setuptools final.wheel ];
-            }));
+            needsSetuptools = [
+              "antlr4-python3-runtime"
+              "fvcore"
+              "iopath"
+              "sam2"
+            ];
+            fix =
+              name:
+              lib.nameValuePair name (
+                prev.${name}.overrideAttrs (old: {
+                  nativeBuildInputs = (old.nativeBuildInputs or [ ]) ++ [
+                    final.setuptools
+                    final.wheel
+                  ];
+                })
+              );
           in
           builtins.listToAttrs (map fix (builtins.filter (n: prev ? ${n}) needsSetuptools));
 
         # All opencv variants provide cv2 — alias them to avoid collisions
-        opencvOverlay = final: prev:
+        opencvOverlay =
+          final: prev:
           lib.optionalAttrs (prev ? opencv-python-headless) {
             opencv-python-headless = final.opencv-python;
           }
@@ -423,7 +433,7 @@
         '';
 
         run = pkgs.writeScriptBin "run" ''
-          python main.py --base-directory /storage/industry/comfyui-base --output-directory ~/mnt/comfy/ --disable-metadata
+          python main.py --base-directory /storage/industry/comfyui-base --output-directory ~/mnt/comfy/ "$@"
         '';
       in
       {

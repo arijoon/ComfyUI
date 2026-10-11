@@ -1,17 +1,16 @@
 [project]
 name = "ComfyUI"
-version = "0.22.0"
+version = "0.39.0"
 readme = "README.md"
 license = { file = "LICENSE" }
 requires-python = ">=3.10"
 dependencies = [
-    "comfyui-frontend-package==1.44.19",
-    "comfyui-workflow-templates==0.9.91",
-    "comfyui-embedded-docs==0.5.1",
+    "comfyui-frontend-package==1.55.14",
+    "comfyui-workflow-templates==0.11.78",
+    "comfyui-embedded-docs==0.5.13",
     "torch",
     "torchsde",
     "torchvision",
-    "torchaudio",
     "numpy>=1.25.0",
     "einops",
     "transformers>=4.50.3",
@@ -28,18 +27,19 @@ dependencies = [
     "alembic",
     "SQLAlchemy>=2.0.0",
     "filelock",
-    "av>=16.0.0",
-    "comfy-kitchen==0.2.10",
-    "comfy-aimdo==0.4.7",
+    "av>=17.0.0",
+    "comfy-kitchen==0.2.37",
+    "comfy-aimdo==0.5.6",
     "requests",
     "simpleeval>=1.0.0",
     "blake3",
+    "cryptography",
     "kornia>=0.7.1",
     "spandrel",
     "pydantic~=2.0",
     "pydantic-settings~=2.0",
-    "PyOpenGL",
-    "glfw",
+    "PyOpenGL>=3.1.8",
+    "comfy-angle",
     "setuptools",
     "wheel",
     "accelerate",

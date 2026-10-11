@@ -183,6 +183,13 @@
               preFixup = (old.preFixup or "") + torchNvSearchPaths;
             });
           }
+          // lib.optionalAttrs (prev ? comfy-kitchen) {
+            comfy-kitchen = prev.comfy-kitchen.overrideAttrs (old: {
+              autoPatchelfIgnoreMissingDeps = (old.autoPatchelfIgnoreMissingDeps or [ ]) ++ [
+                "libamdhip64.so.*"
+              ];
+            });
+          }
           // lib.optionalAttrs (prev ? pyopengl) {
             pyopengl = prev.pyopengl.overrideAttrs (old: {
               buildInputs = (old.buildInputs or [ ]) ++ [ pkgs.libGL ];

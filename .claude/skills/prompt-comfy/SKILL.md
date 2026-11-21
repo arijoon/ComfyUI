@@ -19,6 +19,17 @@ POSTs the whole graph. Saved workflow files are never modified.
 Requirement: the target workflow must have been run at least once in the ComfyUI UI so a
 history entry exists. If not, tell the user to run it once first.
 
+## Paths
+
+The server runs with `--base-directory /storage/industry/comfyui-base` (see the `run`
+script in `flake.nix`), so user data lives there, not in this repo:
+
+- Saved workflows: `/storage/industry/comfyui-base/user/default/workflows/` (read-only for us)
+- Models: `/storage/industry/comfyui-base/models/`
+- Custom nodes: `/storage/industry/comfyui-base/custom_nodes/`
+- Inputs (IPAdapter/face refs): `/storage/industry/comfyui-base/input/`
+- Outputs go to `~/mnt/comfy/` (`--output-directory`)
+
 ## Steps
 
 1. Confirm the server is up: `curl -s -m3 http://127.0.0.1:8188/system_stats | head -c1`.
